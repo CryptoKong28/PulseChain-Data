@@ -14,6 +14,12 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Quick input for INC token
+  const handleINCSearch = () => {
+    setTokenName("INC");
+    setTokenAddress("0x2fa878Ab3F87CC1C9737Fc071108F904c0B0C95d");
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -32,12 +38,12 @@ export default function Home() {
 
   const handleDownload = () => {
     if (!results) return;
-    const data = `Token Name,Address,Total Burned\n${results.name},${tokenAddress},${results.totalBurned}`;
-    const blob = new Blob([data], { type: "text/csv" });
+    const data = `${results.name.toLowerCase()},${tokenAddress || "PLS"},${results.totalBurned}`;
+    const blob = new Blob([data], { type: "text/plain" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${results.name.toLowerCase()}-burned.csv`;
+    a.download = `${results.name.toLowerCase()}-burned.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -116,6 +122,12 @@ export default function Home() {
             </CardTitle>
           </CardHeader>
           <CardContent>
+            <Button 
+              onClick={handleINCSearch}
+              className="w-full mb-4 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
+            >
+              Quick Search for INC
+            </Button>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Input

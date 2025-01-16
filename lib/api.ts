@@ -86,19 +86,25 @@ export class TokenAPI {
           }
           return {
             address,
-            amount: this.web3.utils.fromWei(balance, "ether"),
+            amount: Number(this.web3.utils.fromWei(balance, "ether")).toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2
+            }),
           };
         })
       );
 
       const totalBurned = burnDetails.reduce(
-        (acc, curr) => acc + Number(curr.amount),
+        (acc, curr) => acc + Number(curr.amount.replace(/,/g, '')),
         0
       );
 
       return {
         ...tokenInfo,
-        totalBurned: totalBurned.toLocaleString(),
+        totalBurned: totalBurned.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        }),
         burnPercentage: tokenInfo.totalSupply
           ? ((totalBurned / Number(this.web3.utils.fromWei(tokenInfo.totalSupply, "ether"))) * 100).toFixed(2)
           : "N/A",
