@@ -1,15 +1,15 @@
-import { config } from "./config";
+import { Web3 } from "web3";
+import { config, ERC20_ABI } from "./config";
 
 export class HoldersAPI {
+  private web3: Web3;
   private static instance: HoldersAPI;
-  private queryTimeout: number;
-  private retryAttempts: number;
-  private retryDelay: number;
+  private progressCallback?: (current: number, total: number) => void;
+  private readonly BATCH_SIZE = 50; // Fetch 50 holders at a time
+  private readonly DELAY_BETWEEN_BATCHES = 1000; // 1 second delay between batches
 
   private constructor() {
-    this.queryTimeout = config.query.timeout;
-    this.retryAttempts = config.query.retry.attempts;
-    this.retryDelay = config.query.retry.delay;
+    this.web3 = new Web3(config.rpc.endpoint);
   }
 
   public static getInstance(): HoldersAPI {
@@ -19,75 +19,91 @@ export class HoldersAPI {
     return HoldersAPI.instance;
   }
 
-  private async fetchWithRetry(url: string): Promise<any> {
-    let lastError: Error;
-    
-    for (let i = 0; i < this.retryAttempts; i++) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), this.queryTimeout);
-        
-        const response = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-        
-        return await response.json();
-      } catch (error) {
-        lastError = error as Error;
-        await new Promise(resolve => setTimeout(resolve, this.retryDelay));
-      }
-    }
-    
-    throw lastError!;
+  public onProgress(callback: (current: number, total: number) => void) {
+    this.progressCallback = callback;
+  }
+
+  private delay(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private async getTokenInfo(tokenAddress: string) {
+    const contract = new this.web3.eth.Contract(ERC20_ABI, tokenAddress);
+    const [decimals, totalSupply] = await Promise.all([
+      contract.methods.decimals().call(),
+      contract.methods.totalSupply().call(),
+    ]);
+    return { decimals: Number(decimals), totalSupply: totalSupply.toString() };
   }
 
   async getTokenHolders(tokenAddress: string) {
     try {
-      const baseUrl = `${config.scan.api}/tokens/${tokenAddress}/holders`;
-      const holders: any[] = [];
-      let nextPageParams: any = null;
-      
-      do {
-        const url = nextPageParams 
-          ? `${baseUrl}?${new URLSearchParams(nextPageParams).toString()}`
-          : baseUrl;
-        
-        const data = await this.fetchWithRetry(url);
-        
-        if (!data.items || data.items.length === 0) break;
-        
-        holders.push(...data.items.map((item: any) => ({
-          address: item.address.hash,
-          balance: item.value,
-          percentage: item.percentage,
-        })));
-        
-        nextPageParams = data.next_page_params;
-      } while (nextPageParams && holders.length < config.query.limit);
+      const holders = [];
+      let nextPageParams = null;
+      let processedHolders = 0;
+      const TARGET_HOLDERS = 200;
 
-      const totalHolders = holders.length;
-      const totalSupply = holders.reduce((sum, holder) => sum + Number(holder.balance), 0);
-      
-      // Sort holders by balance in descending order
-      const sortedHolders = holders.sort((a, b) => Number(b.balance) - Number(a.balance));
-      
-      // Calculate distribution metrics
-      const top10Holders = sortedHolders.slice(0, 10);
-      const top10Percentage = top10Holders.reduce((sum, holder) => 
-        sum + Number(holder.percentage), 0
-      );
-      
+      const { decimals, totalSupply } = await this.getTokenInfo(tokenAddress);
+      const divisor = BigInt(10 ** decimals);
+      const totalSupplyAdjusted = (BigInt(totalSupply) / divisor).toString();
+
+      do {
+        // Construct URL with pagination parameters
+        const url = nextPageParams
+          ? `${config.scan.api}/tokens/${tokenAddress}/holders?${new URLSearchParams(nextPageParams)}`
+          : `${config.scan.api}/tokens/${tokenAddress}/holders`;
+
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Failed to fetch holders data');
+        
+        const data = await response.json();
+        
+        // Process current batch
+        for (const item of data.items) {
+          const balanceRaw = BigInt(item.value);
+          const balanceAdjusted = balanceRaw / divisor;
+          
+          holders.push({
+            address: item.address.hash,
+            balance: balanceAdjusted.toString(),
+            percentage: ((Number(balanceAdjusted) / Number(totalSupplyAdjusted)) * 100).toFixed(2),
+          });
+
+          processedHolders++;
+          if (this.progressCallback) {
+            this.progressCallback(processedHolders, Math.min(TARGET_HOLDERS, data.total_count));
+          }
+
+          if (processedHolders >= TARGET_HOLDERS) {
+            break;
+          }
+        }
+
+        // Get next page parameters
+        nextPageParams = data.next_page_params;
+
+        // Break if we've reached our target
+        if (processedHolders >= TARGET_HOLDERS) {
+          break;
+        }
+
+        // Add delay before next batch
+        await this.delay(this.DELAY_BETWEEN_BATCHES);
+
+      } while (nextPageParams);
+
+      const top10Total = holders
+        .slice(0, 10)
+        .reduce((acc, holder) => acc + Number(holder.percentage), 0);
+
       return {
-        totalHolders,
-        totalSupply,
-        top10Percentage,
-        holders: sortedHolders,
+        holders,
+        totalHolders: processedHolders,
+        totalSupply: totalSupplyAdjusted,
+        top10Percentage: top10Total,
       };
     } catch (error) {
-      console.error("Error fetching holders data:", error);
+      console.error("Error fetching holders:", error);
       throw error;
     }
   }

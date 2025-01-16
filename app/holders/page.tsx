@@ -14,6 +14,8 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { Progress } from "@/components/ui/progress";
+import { toast } from "sonner";
 
 export default function HoldersPage() {
   const [tokenAddress, setTokenAddress] = useState("");
@@ -21,27 +23,43 @@ export default function HoldersPage() {
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
+
+  // Quick input for ICSA token
+  const handleICSASearch = () => {
+    setTokenName("ICSA");
+    setTokenAddress("0xfc4913214444aF5c715cc9F7b52655e788A569ed");
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setProgress(0);
 
     try {
       const api = HoldersAPI.getInstance();
+      
+      // Subscribe to progress updates
+      api.onProgress((current, total) => {
+        const percentage = (current / total) * 100;
+        setProgress(percentage);
+      });
+
       const data = await api.getTokenHolders(tokenAddress);
       setResults(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setLoading(false);
+      setProgress(0);
     }
   };
 
   const handleDownload = () => {
     if (!results) return;
     
-    const csvContent = [
+    const content = [
       ["Address", "Balance", "Percentage"],
       ...results.holders.map((holder: any) => [
         holder.address,
@@ -50,11 +68,11 @@ export default function HoldersPage() {
       ])
     ].map(row => row.join(",")).join("\n");
 
-    const blob = new Blob([csvContent], { type: "text/csv" });
+    const blob = new Blob([content], { type: "text/plain" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${tokenName.toLowerCase()}-holders.csv`;
+    a.download = `${tokenName.toLowerCase()}-holders.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -69,7 +87,15 @@ export default function HoldersPage() {
         address: `#${index + 1}`,
         balance: Number(holder.percentage).toFixed(2),
         tooltipAddress: holder.address,
+        actualBalance: holder.balance,
       }));
+  };
+
+  const handleBarClick = (data: any) => {
+    if (data && data.tooltipAddress) {
+      navigator.clipboard.writeText(data.tooltipAddress);
+      toast.success("Address copied to clipboard!");
+    }
   };
 
   return (
@@ -92,6 +118,12 @@ export default function HoldersPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
+            <Button 
+              onClick={handleICSASearch}
+              className="w-full mb-4 bg-gradient-to-r from-yellow-600 to-amber-600 hover:from-yellow-700 hover:to-amber-700"
+            >
+              Quick Search for ICSA
+            </Button>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Input
@@ -120,12 +152,22 @@ export default function HoldersPage() {
                 disabled={loading}
               >
                 {loading ? (
-                  <div className="animate-spin mr-2">⚡</div>
+                  <div className="flex items-center justify-center">
+                    <div className="animate-spin mr-2">⚡</div>
+                    <span>Scanning (This may take a moment)</span>
+                  </div>
                 ) : (
-                  <Search className="mr-2 h-4 w-4" />
+                  <>
+                    <Search className="mr-2 h-4 w-4" />
+                    Scan Holders
+                  </>
                 )}
-                {loading ? "Scanning..." : "Scan Holders"}
               </Button>
+              {loading && (
+                <div className="mt-2 text-center text-sm text-emerald-300">
+                  Please be patient while we fetch the data...
+                </div>
+              )}
             </form>
           </CardContent>
         </Card>
@@ -164,8 +206,12 @@ export default function HoldersPage() {
                           if (active && payload && payload.length) {
                             return (
                               <div className="bg-black/90 p-2 rounded border border-emerald-500/30">
-                                <p className="text-emerald-300">
-                                  Address: {payload[0].payload.tooltipAddress}
+                                <p className="text-emerald-300 cursor-pointer hover:text-emerald-400" 
+                                   onClick={() => handleBarClick(payload[0].payload)}>
+                                  {payload[0].payload.tooltipAddress} (Click to copy)
+                                </p>
+                                <p className="text-white">
+                                  Balance: {payload[0].payload.actualBalance.toLocaleString()} tokens
                                 </p>
                                 <p className="text-white">
                                   Percentage: {payload[0].value}%
@@ -180,6 +226,8 @@ export default function HoldersPage() {
                         dataKey="balance"
                         fill="#059669"
                         radius={[4, 4, 0, 0]}
+                        cursor="pointer"
+                        onClick={(data) => handleBarClick(data)}
                       />
                     </BarChart>
                   </ResponsiveContainer>

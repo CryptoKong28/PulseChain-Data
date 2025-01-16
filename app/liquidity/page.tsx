@@ -13,12 +13,37 @@ const CHART_COLORS = [
   "#D4A5A5", "#9B6B6B", "#E9D985", "#556270", "#6C5B7B"
 ];
 
+const RADIAN = Math.PI / 180;
+const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name }: any) => {
+  const radius = outerRadius * 1.4; // Increase this value to push labels further out
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+
+  return (
+    <text
+      x={x}
+      y={y}
+      fill="white"
+      textAnchor={x > cx ? 'start' : 'end'}
+      dominantBaseline="central"
+      className="text-xs"
+    >
+      {`${name} (${(percent * 100).toFixed(1)}%)`}
+    </text>
+  );
+};
+
 export default function LiquidityPage() {
   const [tokenAddress, setTokenAddress] = useState("");
   const [tokenName, setTokenName] = useState("");
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleHEXSearch = () => {
+    setTokenName("HEX");
+    setTokenAddress("0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39");
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,7 +64,7 @@ export default function LiquidityPage() {
   const handleDownload = () => {
     if (!results) return;
     
-    const csvContent = [
+    const content = [
       ["DEX", "Pair Address", "Base Token", "Quote Token", "Liquidity (USD)"],
       ...results.pairs.map((pair: any) => [
         pair.dexId,
@@ -50,11 +75,11 @@ export default function LiquidityPage() {
       ])
     ].map(row => row.join(",")).join("\n");
 
-    const blob = new Blob([csvContent], { type: "text/csv" });
+    const blob = new Blob([content], { type: "text/plain" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${tokenName.toLowerCase()}-liquidity.csv`;
+    a.download = `${tokenName.toLowerCase()}-liquidity.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -99,6 +124,12 @@ export default function LiquidityPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
+            <Button 
+              onClick={handleHEXSearch}
+              className="w-full mb-4 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700"
+            >
+              Quick Search for HEX
+            </Button>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Input
@@ -157,7 +188,7 @@ export default function LiquidityPage() {
                   </div>
                 </div>
 
-                <div className="h-[400px] w-full">
+                <div className="h-[500px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
@@ -167,9 +198,8 @@ export default function LiquidityPage() {
                         cx="50%"
                         cy="50%"
                         outerRadius={150}
-                        label={({ name, percent }) => 
-                          `${name} (${(percent * 100).toFixed(1)}%)`
-                        }
+                        labelLine={true}
+                        label={renderCustomizedLabel}
                       >
                         {chartData.map((_, index) => (
                           <Cell 
@@ -183,9 +213,56 @@ export default function LiquidityPage() {
                           `$${Number(value).toLocaleString()}`
                         } 
                       />
-                      <Legend />
                     </PieChart>
                   </ResponsiveContainer>
+                </div>
+
+                <div className="mt-8 overflow-hidden rounded-lg border border-cyan-500/30">
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-cyan-900/30">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-cyan-300 uppercase tracking-wider">DEX</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-cyan-300 uppercase tracking-wider">Pair</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-cyan-300 uppercase tracking-wider">Liquidity</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-cyan-300 uppercase tracking-wider">Share</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-cyan-500/10">
+                        {results.pairs
+                          .sort((a: any, b: any) => b.liquidity.usd - a.liquidity.usd)
+                          .map((pair: any, index: number) => (
+                            <tr key={index} className="hover:bg-cyan-900/20">
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <span className="px-2 py-1 rounded-full text-xs font-medium bg-cyan-900/40 text-cyan-300">
+                                  {pair.dexId}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="text-sm">
+                                  <span className="font-medium text-cyan-300">{pair.baseToken.symbol}</span>
+                                  <span className="text-gray-400"> / </span>
+                                  <span className="font-medium text-cyan-300">{pair.quoteToken.symbol}</span>
+                                </div>
+                                <div className="text-xs text-gray-400 font-mono truncate">
+                                  {pair.pairAddress}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                <span className="text-sm font-medium">
+                                  ${Number(pair.liquidity.usd).toLocaleString()}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                <span className="text-sm font-medium">
+                                  {((pair.liquidity.usd / totalLiquidity) * 100).toFixed(1)}%
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 <Button 
