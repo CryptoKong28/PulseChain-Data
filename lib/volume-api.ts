@@ -2,6 +2,8 @@ import { config } from "./config";
 
 export class VolumeAPI {
   private static instance: VolumeAPI;
+  private readonly MAX_RETRIES = 3;
+  private readonly RETRY_DELAY = 1000;
 
   private constructor() {}
 
@@ -12,26 +14,52 @@ export class VolumeAPI {
     return VolumeAPI.instance;
   }
 
-  async getVolumeData(tokenAddress: string) {
-    try {
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_DEXSCREENER_API}/${tokenAddress}`
-      );
+  private delay(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 
+  private async fetchWithRetry(url: string, attempt = 1): Promise<any> {
+    try {
+      const response = await fetch(url);
+      
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
       }
 
       const data = await response.json();
       
-      if (!data.pairs || data.pairs.length === 0) {
-        throw new Error("No volume data found for this token");
+      if (!data.pairs || !Array.isArray(data.pairs)) {
+        throw new Error("Invalid response format");
       }
 
+      return data;
+    } catch (error) {
+      if (attempt < this.MAX_RETRIES) {
+        console.log(`Attempt ${attempt} failed, retrying...`);
+        await this.delay(this.RETRY_DELAY);
+        return this.fetchWithRetry(url, attempt + 1);
+      }
+      throw error;
+    }
+  }
+
+  async getVolumeData(tokenAddress: string) {
+    try {
+      const data = await this.fetchWithRetry(`${config.dex.api}/${tokenAddress}`);
+      
       // Filter and sort pairs by 24h volume
       const pairs = data.pairs
-        .filter((pair: any) => pair.volume?.h24 && pair.volume.h24 > 0)
+        .filter((pair: any) => 
+          pair.volume?.h24 && 
+          pair.volume.h24 > 0 &&
+          pair.dexId && 
+          pair.pairAddress
+        )
         .sort((a: any, b: any) => (b.volume?.h24 || 0) - (a.volume?.h24 || 0));
+
+      if (pairs.length === 0) {
+        throw new Error("No active trading pairs found for this token");
+      }
 
       // Calculate total volume
       const totalVolume = pairs.reduce((sum: number, pair: any) => 

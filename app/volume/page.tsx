@@ -27,6 +27,11 @@ export default function VolumePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const handlePTGCSearch = () => {
+    setTokenName("PTGC");
+    setTokenAddress("0x94534EeEe131840b1c0F61847c572228bdfDDE93");
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -71,11 +76,69 @@ export default function VolumePage() {
 
   const prepareChartData = () => {
     if (!results) return [];
-    return results.pairs.map((pair: any) => ({
-      name: pair.dexId,
-      value: Number(pair.volume),
-      percentage: pair.percentage
-    }));
+
+    // Group by DEX and calculate total volume
+    const dexVolumes = results.pairs.reduce((acc: any, pair: any) => {
+      const dex = pair.dexId;
+      acc[dex] = (acc[dex] || 0) + pair.volume;
+      return acc;
+    }, {});
+
+    // Convert to array and calculate percentages
+    let chartData = Object.entries(dexVolumes)
+      .map(([name, value]) => ({
+        name,
+        value: value as number,
+        percentage: ((value as number) / results.totalVolume) * 100
+      }))
+      .sort((a, b) => b.percentage - a.percentage);
+
+    // Group small percentages into "Others"
+    const THRESHOLD = 1; // Only show DEXs with more than 1% share
+    const mainDexes = chartData.filter(item => item.percentage >= THRESHOLD);
+    const others = chartData.filter(item => item.percentage < THRESHOLD);
+
+    if (others.length > 0) {
+      const othersTotal = others.reduce((sum, item) => sum + item.value, 0);
+      const othersPercentage = (othersTotal / results.totalVolume) * 100;
+      
+      chartData = [
+        ...mainDexes,
+        {
+          name: 'Others',
+          value: othersTotal,
+          percentage: othersPercentage
+        }
+      ];
+    }
+
+    return chartData;
+  };
+
+  const RADIAN = Math.PI / 180;
+  const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name, index }: any) => {
+    // Increase radius for labels
+    const radius = outerRadius * 1.2;
+    
+    // Calculate position
+    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+
+    // Only show label if percentage is significant
+    if (percent < 0.01) return null;
+
+    return (
+      <text
+        x={x}
+        y={y}
+        fill="white"
+        textAnchor={x > cx ? 'start' : 'end'}
+        dominantBaseline="central"
+        className="text-xs font-medium"
+      >
+        {`${name} (${(percent * 100).toFixed(1)}%)`}
+      </text>
+    );
   };
 
   return (
@@ -98,6 +161,12 @@ export default function VolumePage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
+            <Button 
+              onClick={handlePTGCSearch}
+              className="w-full mb-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+            >
+              Quick Search for pTGC
+            </Button>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Input
@@ -156,7 +225,7 @@ export default function VolumePage() {
                   </div>
                 </div>
 
-                <div className="h-[400px] w-full">
+                <div className="h-[500px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
@@ -166,25 +235,71 @@ export default function VolumePage() {
                         cx="50%"
                         cy="50%"
                         outerRadius={150}
-                        label={({ name, percent }) => 
-                          `${name} (${(percent * 100).toFixed(1)}%)`
-                        }
+                        labelLine={false}
+                        label={renderCustomizedLabel}
                       >
-                        {prepareChartData().map((_, index) => (
+                        {prepareChartData().map((entry, index) => (
                           <Cell 
-                            key={`cell-${index}`} 
-                            fill={CHART_COLORS[index % CHART_COLORS.length]} 
+                            key={`cell-${index}`}
+                            fill={CHART_COLORS[index % CHART_COLORS.length]}
                           />
                         ))}
                       </Pie>
                       <Tooltip 
                         formatter={(value: any) => 
                           `$${Number(value).toLocaleString()}`
-                        } 
+                        }
                       />
-                      <Legend />
                     </PieChart>
                   </ResponsiveContainer>
+                </div>
+
+                <div className="mt-8 overflow-hidden rounded-lg border border-amber-500/30">
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-amber-900/30">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-amber-300 uppercase tracking-wider">DEX</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-amber-300 uppercase tracking-wider">Pair</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-amber-300 uppercase tracking-wider">24h Volume</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-amber-300 uppercase tracking-wider">Share</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-amber-500/10">
+                        {results.pairs
+                          .sort((a: any, b: any) => b.volume - a.volume)
+                          .map((pair: any, index: number) => (
+                            <tr key={index} className="hover:bg-amber-900/20">
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <span className="px-2 py-1 rounded-full text-xs font-medium bg-amber-900/40 text-amber-300">
+                                  {pair.dexId}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="text-sm">
+                                  <span className="font-medium text-amber-300">{pair.baseToken.symbol}</span>
+                                  <span className="text-gray-400"> / </span>
+                                  <span className="font-medium text-amber-300">{pair.quoteToken.symbol}</span>
+                                </div>
+                                <div className="text-xs text-gray-400 font-mono truncate">
+                                  {pair.pairAddress}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                <span className="text-sm font-medium">
+                                  ${Number(pair.volume).toLocaleString()}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                <span className="text-sm font-medium">
+                                  {pair.percentage}%
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 <Button 

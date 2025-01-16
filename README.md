@@ -2,7 +2,7 @@
 
 A modern, feature-rich web application for analyzing tokens on PulseChain. Track burned tokens, monitor liquidity distribution, analyze holder patterns, and view trading volume across different DEXs.
 
-![Token Scanner](https://images.unsplash.com/photo-1642543492481-44e81e3914a7?auto=format&fit=crop&q=80&w=2000&h=600)
+![Token Scanner](/public/photo.png)
 
 ## Features
 
