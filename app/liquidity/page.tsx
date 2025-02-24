@@ -70,9 +70,7 @@ export default function LiquidityPage() {
       
       if (!data || 
           !data.pairs || 
-          !Array.isArray(data.pairs) ||
-          typeof data.totalLiquidity !== 'number' ||
-          typeof data.dexCount !== 'number') {
+          !Array.isArray(data.pairs)) {
         throw new Error("Invalid API response structure");
       }
 
