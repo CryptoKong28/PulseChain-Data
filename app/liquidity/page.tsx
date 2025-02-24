@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { Download, Search, Droplets } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiquidityAPI } from "@/lib/liquidity-api";
+import DOMPurify from "dompurify";
 
 const CHART_COLORS = [
   "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEEAD",
@@ -39,10 +40,20 @@ export default function LiquidityPage() {
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cooldown, setCooldown] = useState(10);
+
+  useEffect(() => {
+    if (cooldown > 0) {
+      const timer = setInterval(() => {
+        setCooldown((prev) => prev - 1);
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [cooldown]);
 
   const handleHEXSearch = () => {
-    setTokenName("HEX");
-    setTokenAddress("0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39");
+    setTokenName(DOMPurify.sanitize("HEX"));
+    setTokenAddress(DOMPurify.sanitize("0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39"));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -51,9 +62,22 @@ export default function LiquidityPage() {
     setError(null);
 
     try {
+      const cleanName = DOMPurify.sanitize(tokenName).substring(0, 30);
+      const cleanAddress = DOMPurify.sanitize(tokenAddress);
+
       const api = LiquidityAPI.getInstance();
-      const data = await api.getPairsData(tokenAddress);
+      const data = await api.getPairsData(cleanAddress);
+      
+      if (!data || 
+          !data.pairs || 
+          !Array.isArray(data.pairs) ||
+          typeof data.totalLiquidity !== 'number' ||
+          typeof data.dexCount !== 'number') {
+        throw new Error("Invalid API response structure");
+      }
+
       setResults(data);
+      setCooldown(10);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -136,15 +160,15 @@ export default function LiquidityPage() {
                   placeholder="Token Name (e.g., HEX)"
                   className="bg-gray-900/50 border-cyan-500/30 text-cyan-100"
                   value={tokenName}
-                  onChange={(e) => setTokenName(e.target.value)}
-                  disabled={loading}
+                  onChange={(e) => setTokenName(DOMPurify.sanitize(e.target.value))}
+                  disabled={loading || cooldown > 0}
                 />
                 <Input
                   placeholder="Token Address (required)"
                   className="bg-gray-900/50 border-cyan-500/30 text-cyan-100"
                   value={tokenAddress}
-                  onChange={(e) => setTokenAddress(e.target.value)}
-                  disabled={loading}
+                  onChange={(e) => setTokenAddress(DOMPurify.sanitize(e.target.value))}
+                  disabled={loading || cooldown > 0}
                 />
               </div>
               {error && (
@@ -155,14 +179,14 @@ export default function LiquidityPage() {
               <Button 
                 type="submit" 
                 className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700"
-                disabled={loading}
+                disabled={loading || cooldown > 0}
               >
                 {loading ? (
                   <div className="animate-spin mr-2">⚡</div>
                 ) : (
                   <Search className="mr-2 h-4 w-4" />
                 )}
-                {loading ? "Scanning..." : "Scan Liquidity"}
+                {loading ? "Scanning..." : cooldown > 0 ? `Wait ${cooldown}s` : "Scan Liquidity"}
               </Button>
             </form>
           </CardContent>
@@ -172,7 +196,7 @@ export default function LiquidityPage() {
           <Card className="max-w-4xl mx-auto mt-8 bg-black/50 border border-cyan-500/30 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="text-2xl text-center text-cyan-300">
-                Liquidity Distribution for {results.pairs[0]?.baseToken.symbol || tokenName}
+                Liquidity Distribution for {tokenName.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -235,7 +259,7 @@ export default function LiquidityPage() {
                             <tr key={index} className="hover:bg-cyan-900/20">
                               <td className="px-4 py-3 whitespace-nowrap">
                                 <span className="px-2 py-1 rounded-full text-xs font-medium bg-cyan-900/40 text-cyan-300">
-                                  {pair.dexId}
+                                  {DOMPurify.sanitize(pair.dexId.toString())}
                                 </span>
                               </td>
                               <td className="px-4 py-3">
