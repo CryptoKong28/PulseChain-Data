@@ -41,15 +41,16 @@ export default function VolumePage() {
 
   const isValidEthereumAddress = (address: string) => {
     try {
-      return ethers.getAddress(address.toLowerCase()) === address.toLowerCase();
+      ethers.getAddress(address);
+      return true;
     } catch {
       return false;
     }
   };
 
   const handlePTGCSearch = () => {
-    setTokenName(DOMPurify.sanitize("PTGC"));
-    setTokenAddress(DOMPurify.sanitize("0x94534EeEe131840b1c0F61847c572228bdfDDE93"));
+    setTokenName(DOMPurify.sanitize("UFO"));
+    setTokenAddress(DOMPurify.sanitize("0x456548A9B56eFBbD89Ca0309edd17a9E20b04018"));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -207,7 +208,7 @@ export default function VolumePage() {
               onClick={handlePTGCSearch}
               className="w-full mb-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
             >
-              Quick Search for pTGC
+              Quick Search for UFO
             </Button>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
