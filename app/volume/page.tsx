@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Download, Search, BarChart2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,8 @@ import {
   Tooltip,
   Legend
 } from "recharts";
+import { ethers } from "ethers";
+import DOMPurify from "dompurify";
 
 const CHART_COLORS = [
   "#F59E0B", "#D97706", "#B45309", "#92400E", "#78350F",
@@ -26,10 +28,28 @@ export default function VolumePage() {
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cooldown, setCooldown] = useState(10);
+
+  useEffect(() => {
+    if (cooldown > 0) {
+      const timer = setInterval(() => {
+        setCooldown((prev) => prev - 1);
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [cooldown]);
+
+  const isValidEthereumAddress = (address: string) => {
+    try {
+      return ethers.getAddress(address.toLowerCase()) === address.toLowerCase();
+    } catch {
+      return false;
+    }
+  };
 
   const handlePTGCSearch = () => {
-    setTokenName("PTGC");
-    setTokenAddress("0x94534EeEe131840b1c0F61847c572228bdfDDE93");
+    setTokenName(DOMPurify.sanitize("PTGC"));
+    setTokenAddress(DOMPurify.sanitize("0x94534EeEe131840b1c0F61847c572228bdfDDE93"));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -38,9 +58,31 @@ export default function VolumePage() {
     setError(null);
 
     try {
+      if (!isValidEthereumAddress(tokenAddress)) {
+        throw new Error("Invalid Ethereum address format");
+      }
+
+      const burnAddresses = process.env.NEXT_PUBLIC_BURN_ADDRESSES?.split(',') || [];
+      if (burnAddresses.includes(tokenAddress.toLowerCase())) {
+        throw new Error("Cannot scan burn address");
+      }
+
+      const cleanTokenName = DOMPurify.sanitize(tokenName).substring(0, 30);
+      const cleanTokenAddress = tokenAddress.toLowerCase();
+
       const api = VolumeAPI.getInstance();
-      const data = await api.getVolumeData(tokenAddress);
+      const data = await api.getVolumeData(cleanTokenAddress);
+      
+      if (!data || 
+          !data.pairs || 
+          !Array.isArray(data.pairs) || 
+          typeof data.totalVolume !== 'number' ||
+          typeof data.dexCount !== 'number') {
+        throw new Error("Invalid API response structure");
+      }
+
       setResults(data);
+      setTokenName(cleanTokenName);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -173,14 +215,17 @@ export default function VolumePage() {
                   placeholder="Token Name (e.g., HEX)"
                   className="bg-gray-900/50 border-amber-500/30 text-amber-100"
                   value={tokenName}
-                  onChange={(e) => setTokenName(e.target.value)}
-                  disabled={loading}
+                  onChange={(e) => setTokenName(DOMPurify.sanitize(e.target.value))}
+                  disabled={loading || cooldown > 0}
                 />
                 <Input
                   placeholder="Token Address (required)"
                   className="bg-gray-900/50 border-amber-500/30 text-amber-100"
                   value={tokenAddress}
-                  onChange={(e) => setTokenAddress(e.target.value)}
+                  onChange={(e) => {
+                    const cleanAddress = DOMPurify.sanitize(e.target.value);
+                    setTokenAddress(cleanAddress)
+                  }}
                   disabled={loading}
                 />
               </div>
@@ -192,14 +237,14 @@ export default function VolumePage() {
               <Button 
                 type="submit" 
                 className="w-full bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700"
-                disabled={loading}
+                disabled={loading || cooldown > 0}
               >
                 {loading ? (
                   <div className="animate-spin mr-2">⚡</div>
                 ) : (
                   <Search className="mr-2 h-4 w-4" />
                 )}
-                {loading ? "Scanning..." : "Scan Volume"}
+                {loading ? "Scanning..." : cooldown > 0 ? `Wait ${cooldown}s` : "Scan Volume"}
               </Button>
             </form>
           </CardContent>
@@ -209,7 +254,7 @@ export default function VolumePage() {
           <Card className="max-w-4xl mx-auto mt-8 bg-black/50 border border-amber-500/30 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="text-2xl text-center text-amber-300">
-                Volume Distribution for {tokenName}
+                Volume Distribution for {tokenName.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -272,7 +317,7 @@ export default function VolumePage() {
                             <tr key={index} className="hover:bg-amber-900/20">
                               <td className="px-4 py-3 whitespace-nowrap">
                                 <span className="px-2 py-1 rounded-full text-xs font-medium bg-amber-900/40 text-amber-300">
-                                  {pair.dexId}
+                                  {DOMPurify.sanitize(pair.dexId.toString())}
                                 </span>
                               </td>
                               <td className="px-4 py-3">

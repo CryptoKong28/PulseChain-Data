@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Download, Flame, Search, Code, GitBranch, Terminal } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TokenAPI } from "@/lib/api";
+import DOMPurify from "dompurify";
 
 export default function Home() {
   const [tokenAddress, setTokenAddress] = useState("");
@@ -13,11 +14,21 @@ export default function Home() {
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cooldown, setCooldown] = useState(10);
+  const DECIMALS = Number(process.env.NEXT_PUBLIC_NATIVE_TOKEN_DECIMALS) || 18;
 
-  // Quick input for INC token
+  useEffect(() => {
+    if (cooldown > 0) {
+      const timer = setInterval(() => {
+        setCooldown((prev) => prev - 1);
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [cooldown]);
+
   const handleINCSearch = () => {
-    setTokenName("INC");
-    setTokenAddress("0x2fa878Ab3F87CC1C9737Fc071108F904c0B0C95d");
+    setTokenName(DOMPurify.sanitize("INC"));
+    setTokenAddress(DOMPurify.sanitize("0x2fa878Ab3F87CC1C9737Fc071108F904c0B0C95d"));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -26,9 +37,18 @@ export default function Home() {
     setError(null);
 
     try {
+      const cleanName = DOMPurify.sanitize(tokenName).substring(0, 30);
+      const cleanAddress = DOMPurify.sanitize(tokenAddress);
+
       const api = TokenAPI.getInstance();
-      const data = await api.scanBurnedTokens(tokenName, tokenAddress);
+      const data = await api.scanBurnedTokens(cleanName, cleanAddress);
+      
+      if (!data || !data.burnDetails || !Array.isArray(data.burnDetails)) {
+        throw new Error("Invalid API response structure");
+      }
+
       setResults(data);
+      setCooldown(10);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -134,15 +154,15 @@ export default function Home() {
                   placeholder="Token Name (e.g., PLS)"
                   className="bg-gray-900/50 border-purple-500/30 text-purple-100"
                   value={tokenName}
-                  onChange={(e) => setTokenName(e.target.value)}
-                  disabled={loading}
+                  onChange={(e) => setTokenName(DOMPurify.sanitize(e.target.value))}
+                  disabled={loading || cooldown > 0}
                 />
                 <Input
                   placeholder="Token Address (optional for PLS)"
                   className="bg-gray-900/50 border-purple-500/30 text-purple-100"
                   value={tokenAddress}
-                  onChange={(e) => setTokenAddress(e.target.value)}
-                  disabled={loading}
+                  onChange={(e) => setTokenAddress(DOMPurify.sanitize(e.target.value))}
+                  disabled={loading || cooldown > 0}
                 />
               </div>
               {error && (
@@ -153,14 +173,14 @@ export default function Home() {
               <Button 
                 type="submit" 
                 className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
-                disabled={loading}
+                disabled={loading || cooldown > 0}
               >
                 {loading ? (
                   <div className="animate-spin mr-2">⚡</div>
                 ) : (
                   <Search className="mr-2 h-4 w-4" />
                 )}
-                {loading ? "Scanning..." : "Scan Token"}
+                {loading ? "Scanning..." : cooldown > 0 ? `Wait ${cooldown}s` : "Scan Token"}
               </Button>
             </form>
           </CardContent>
@@ -170,7 +190,7 @@ export default function Home() {
           <Card className="max-w-2xl mx-auto mt-8 bg-black/50 border border-purple-500/30 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="text-2xl text-center text-purple-300">
-                Results for {results.name}
+                Results for {results.name.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -178,11 +198,19 @@ export default function Home() {
                 <div className="grid grid-cols-1 gap-4">
                   <div className="bg-purple-900/30 p-4 rounded-lg">
                     <p className="text-sm text-purple-300">Total Supply</p>
-                    <p className="text-2xl font-bold break-all">{results.totalSupply ? Number(results.totalSupply).toLocaleString() : "N/A"}</p>
+                    <p className="text-2xl font-bold break-all">
+                      {(Number(results.totalSupply) / Math.pow(10, DECIMALS)).toLocaleString(undefined, {
+                        maximumFractionDigits: 2
+                      })}
+                    </p>
                   </div>
                   <div className="bg-pink-900/30 p-4 rounded-lg">
                     <p className="text-sm text-pink-300">Total Burned</p>
-                    <p className="text-2xl font-bold break-all">{results.totalBurned}</p>
+                    <p className="text-2xl font-bold break-all">
+                      {Number(results.totalBurned.replace(/,/g, '')).toLocaleString(undefined, {
+                        maximumFractionDigits: 2
+                      })}
+                    </p>
                   </div>
                 </div>
                 
@@ -191,7 +219,11 @@ export default function Home() {
                   {results.burnDetails.map((detail: any, index: number) => (
                     <div key={index} className="flex justify-between items-center py-2 border-b border-purple-500/20">
                       <span className="text-sm font-mono">{detail.address}</span>
-                      <span className="text-purple-300 break-all ml-4">{detail.amount}</span>
+                      <span className="text-purple-300 break-all ml-4">
+                        {Number(detail.amount).toLocaleString(undefined, {
+                          maximumFractionDigits: 2
+                        })}
+                      </span>
                     </div>
                   ))}
                 </div>

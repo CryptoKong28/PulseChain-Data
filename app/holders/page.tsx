@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Download, Search, Users } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import {
 } from "recharts";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
+import DOMPurify from "dompurify";
 
 export default function HoldersPage() {
   const [tokenAddress, setTokenAddress] = useState("");
@@ -24,11 +25,20 @@ export default function HoldersPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const [cooldown, setCooldown] = useState(10);
 
-  // Quick input for ICSA token
+  useEffect(() => {
+    if (cooldown > 0) {
+      const timer = setInterval(() => {
+        setCooldown((prev) => prev - 1);
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [cooldown]);
+
   const handleICSASearch = () => {
-    setTokenName("ICSA");
-    setTokenAddress("0xfc4913214444aF5c715cc9F7b52655e788A569ed");
+    setTokenName(DOMPurify.sanitize("ICSA"));
+    setTokenAddress(DOMPurify.sanitize("0xfc4913214444aF5c715cc9F7b52655e788A569ed"));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -38,16 +48,27 @@ export default function HoldersPage() {
     setProgress(0);
 
     try {
+      const cleanName = DOMPurify.sanitize(tokenName).substring(0, 30);
+      const cleanAddress = DOMPurify.sanitize(tokenAddress);
+
       const api = HoldersAPI.getInstance();
       
-      // Subscribe to progress updates
       api.onProgress((current, total) => {
         const percentage = (current / total) * 100;
         setProgress(percentage);
       });
 
-      const data = await api.getTokenHolders(tokenAddress);
+      const data = await api.getTokenHolders(cleanAddress);
+      if (!data || 
+          !data.holders || 
+          !Array.isArray(data.holders) ||
+          typeof data.totalHolders !== 'number' ||
+          typeof data.top10Percentage !== 'number') {
+        throw new Error("Invalid API response structure");
+      }
+
       setResults(data);
+      setCooldown(10);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -130,15 +151,15 @@ export default function HoldersPage() {
                   placeholder="Token Name (e.g., HEX)"
                   className="bg-gray-900/50 border-emerald-500/30 text-emerald-100"
                   value={tokenName}
-                  onChange={(e) => setTokenName(e.target.value)}
-                  disabled={loading}
+                  onChange={(e) => setTokenName(DOMPurify.sanitize(e.target.value))}
+                  disabled={loading || cooldown > 0}
                 />
                 <Input
                   placeholder="Token Address (required)"
                   className="bg-gray-900/50 border-emerald-500/30 text-emerald-100"
                   value={tokenAddress}
-                  onChange={(e) => setTokenAddress(e.target.value)}
-                  disabled={loading}
+                  onChange={(e) => setTokenAddress(DOMPurify.sanitize(e.target.value))}
+                  disabled={loading || cooldown > 0}
                 />
               </div>
               {error && (
@@ -149,7 +170,7 @@ export default function HoldersPage() {
               <Button 
                 type="submit" 
                 className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700"
-                disabled={loading}
+                disabled={loading || cooldown > 0}
               >
                 {loading ? (
                   <div className="flex items-center justify-center">
@@ -159,7 +180,7 @@ export default function HoldersPage() {
                 ) : (
                   <>
                     <Search className="mr-2 h-4 w-4" />
-                    Scan Holders
+                    {cooldown > 0 ? `Wait ${cooldown}s` : "Scan Holders"}
                   </>
                 )}
               </Button>
@@ -176,7 +197,7 @@ export default function HoldersPage() {
           <Card className="max-w-4xl mx-auto mt-8 bg-black/50 border border-emerald-500/30 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="text-2xl text-center text-emerald-300">
-                Holder Distribution for {tokenName}
+                Holder Distribution for {tokenName.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -208,7 +229,7 @@ export default function HoldersPage() {
                               <div className="bg-black/90 p-2 rounded border border-emerald-500/30">
                                 <p className="text-emerald-300 cursor-pointer hover:text-emerald-400" 
                                    onClick={() => handleBarClick(payload[0].payload)}>
-                                  {payload[0].payload.tooltipAddress} (Click to copy)
+                                  {DOMPurify.sanitize(payload[0].payload.tooltipAddress)} (Click to copy)
                                 </p>
                                 <p className="text-white">
                                   Balance: {payload[0].payload.actualBalance.toLocaleString()} tokens
