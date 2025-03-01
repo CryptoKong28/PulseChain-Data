@@ -86,7 +86,9 @@ export default function Home() {
           !detail.address || 
           typeof detail.address !== 'string' ||
           !detail.amount || 
-          isNaN(Number(detail.amount)))) {
+          typeof detail.amount !== 'string' ||
+          typeof detail.rawAmount !== 'number' ||
+          isNaN(detail.rawAmount))) {
         throw new Error("Invalid burn details in response");
       }
 

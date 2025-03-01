@@ -24,16 +24,33 @@ export class LiquidityAPI {
 
       const data = await response.json();
       
-      if (!data.pairs || data.pairs.length === 0) {
+      // Validate basic API structure
+      if (!data || typeof data !== 'object') {
+        throw new Error("Invalid API response format");
+      }
+      
+      if (!data.pairs || !Array.isArray(data.pairs)) {
         throw new Error("No liquidity pairs found for this token");
       }
 
+      // Filter valid pairs and validate each one
+      const validPairs = data.pairs.filter((pair: any) => {
+        if (!pair || typeof pair !== 'object') return false;
+        if (!pair.dexId || !pair.pairAddress) return false;
+        if (!pair.baseToken || !pair.baseToken.symbol) return false;
+        if (!pair.quoteToken || !pair.quoteToken.symbol) return false;
+        if (!pair.liquidity || typeof pair.liquidity !== 'object') return false;
+        if (typeof pair.liquidity.usd !== 'number' || isNaN(pair.liquidity.usd) || pair.liquidity.usd <= 0) return false;
+        
+        return true;
+      }).sort((a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+
+      if (validPairs.length === 0) {
+        throw new Error("No valid liquidity pairs found for this token");
+      }
+
       return {
-        pairs: data.pairs.filter((pair: any) => 
-          pair.liquidity?.usd && pair.liquidity.usd > 0
-        ).sort((a: any, b: any) => 
-          (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0)
-        )
+        pairs: validPairs
       };
     } catch (error) {
       console.error("Error fetching pairs data:", error);

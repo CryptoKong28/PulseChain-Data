@@ -62,42 +62,102 @@ export class TokenAPI {
           this.web3.utils.toChecksumAddress(tokenAddress)
         );
         
-        tokenInfo = {
-          name: await this.retry(() => contract.methods.name().call()),
-          symbol: await this.retry(() => contract.methods.symbol().call()),
-          decimals: await this.retry(() => contract.methods.decimals().call()),
-          totalSupply: await this.retry(() => contract.methods.totalSupply().call()),
-        };
+        try {
+          const [name, symbol, decimals, totalSupply] = await Promise.all([
+            this.retry(() => contract.methods.name().call()).catch(() => "Unknown"),
+            this.retry(() => contract.methods.symbol().call()).catch(() => "Unknown"),
+            this.retry(() => contract.methods.decimals().call()).catch(() => "18"),
+            this.retry(() => contract.methods.totalSupply().call()),
+          ]);
+          
+          tokenInfo = {
+            name: name || "Unknown",
+            symbol: symbol || "Unknown",
+            decimals: Number(decimals || 18),
+            totalSupply: totalSupply ? totalSupply.toString() : "0",
+          };
+        } catch (error) {
+          console.error("Error fetching token info:", error);
+          tokenInfo = {
+            name: name || "Unknown",
+            symbol: "Unknown",
+            decimals: 18,
+            totalSupply: "0",
+          };
+        }
       }
 
       const burnDetails = await Promise.all(
         config.burnAddresses.map(async (address) => {
           let balance: string;
-          if (isNativeToken) {
-            const result = await this.retry(() => this.web3.eth.getBalance(address));
-            balance = result ? result.toString() : "0";
-          } else {
-            const contract = new this.web3.eth.Contract(
-              ERC20_ABI,
-              this.web3.utils.toChecksumAddress(tokenAddress!)
-            );
-            const result = await this.retry(() => contract.methods.balanceOf(address).call());
-            balance = result ? result.toString() : "0";
+          try {
+            if (isNativeToken) {
+              const result = await this.retry(() => this.web3.eth.getBalance(address));
+              balance = result ? result.toString() : "0";
+            } else {
+              const contract = new this.web3.eth.Contract(
+                ERC20_ABI,
+                this.web3.utils.toChecksumAddress(tokenAddress!)
+              );
+              const result = await this.retry(() => contract.methods.balanceOf(address).call());
+              balance = result ? result.toString() : "0";
+            }
+          } catch (error) {
+            console.error(`Error fetching balance for ${address}:`, error);
+            balance = "0";
           }
-          return {
-            address,
-            amount: Number(this.web3.utils.fromWei(balance, "ether")).toLocaleString(undefined, {
+          
+          // Safely convert balance to a number format
+          let formattedBalance: string;
+          try {
+            // First get the raw number value for validation
+            const rawNumber = Number(this.web3.utils.fromWei(balance, "ether"));
+            
+            // Format it for display
+            formattedBalance = rawNumber.toLocaleString(undefined, {
               minimumFractionDigits: 2,
               maximumFractionDigits: 2
-            }),
+            });
+          } catch (error) {
+            console.error("Error formatting balance:", error);
+            formattedBalance = "0.00";
+          }
+          
+          return {
+            address,
+            amount: formattedBalance,
+            // Add a numeric version without commas for validation
+            rawAmount: parseFloat(formattedBalance.replace(/,/g, ''))
           };
         })
       );
 
-      const totalBurned = burnDetails.reduce(
-        (acc, curr) => acc + Number(curr.amount.replace(/,/g, '')),
-        0
-      );
+      // Safely calculate total burned
+      let totalBurned = 0;
+      try {
+        totalBurned = burnDetails.reduce(
+          (acc, curr) => {
+            // Use the rawAmount which is already a number
+            return isNaN(curr.rawAmount) ? acc : acc + curr.rawAmount;
+          },
+          0
+        );
+      } catch (error) {
+        console.error("Error calculating total burned:", error);
+      }
+
+      // Safely calculate burn percentage
+      let burnPercentage = "0.00";
+      try {
+        if (tokenInfo.totalSupply && tokenInfo.totalSupply !== "0") {
+          const totalSupplyNumber = Number(this.web3.utils.fromWei(tokenInfo.totalSupply, "ether"));
+          if (!isNaN(totalSupplyNumber) && totalSupplyNumber > 0) {
+            burnPercentage = ((totalBurned / totalSupplyNumber) * 100).toFixed(2);
+          }
+        }
+      } catch (error) {
+        console.error("Error calculating burn percentage:", error);
+      }
 
       return {
         ...tokenInfo,
@@ -105,9 +165,7 @@ export class TokenAPI {
           minimumFractionDigits: 2,
           maximumFractionDigits: 2
         }),
-        burnPercentage: tokenInfo.totalSupply
-          ? ((totalBurned / Number(this.web3.utils.fromWei(tokenInfo.totalSupply, "ether"))) * 100).toFixed(2)
-          : "N/A",
+        burnPercentage,
         burnDetails,
       };
     } catch (error) {

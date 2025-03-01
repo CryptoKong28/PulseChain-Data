@@ -47,14 +47,24 @@ export class VolumeAPI {
     try {
       const data = await this.fetchWithRetry(`${config.dex.api}/${tokenAddress}`);
       
+      // Validate response structure
+      if (!data || !data.pairs || !Array.isArray(data.pairs)) {
+        throw new Error("Invalid API response format");
+      }
+      
       // Filter and sort pairs by 24h volume
       const pairs = data.pairs
-        .filter((pair: any) => 
-          pair.volume?.h24 && 
-          pair.volume.h24 > 0 &&
-          pair.dexId && 
-          pair.pairAddress
-        )
+        .filter((pair: any) => {
+          // Enhanced validation for each pair
+          if (!pair || typeof pair !== 'object') return false;
+          if (!pair.dexId || !pair.pairAddress) return false;
+          if (!pair.baseToken || !pair.baseToken.symbol) return false;
+          if (!pair.quoteToken || !pair.quoteToken.symbol) return false;
+          if (!pair.volume || typeof pair.volume !== 'object') return false;
+          if (typeof pair.volume.h24 !== 'number' || isNaN(pair.volume.h24) || pair.volume.h24 <= 0) return false;
+          
+          return true;
+        })
         .sort((a: any, b: any) => (b.volume?.h24 || 0) - (a.volume?.h24 || 0));
 
       if (pairs.length === 0) {
@@ -66,14 +76,14 @@ export class VolumeAPI {
         sum + (pair.volume?.h24 || 0), 0
       );
 
-      // Calculate volume percentages
+      // Calculate volume percentages with safer conversion
       const volumeData = pairs.map((pair: any) => ({
         dexId: pair.dexId,
         pairAddress: pair.pairAddress,
         baseToken: pair.baseToken,
         quoteToken: pair.quoteToken,
         volume: pair.volume.h24,
-        percentage: ((pair.volume.h24 / totalVolume) * 100).toFixed(2)
+        percentage: parseFloat(((pair.volume.h24 / totalVolume) * 100).toFixed(2))
       }));
 
       return {

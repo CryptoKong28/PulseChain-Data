@@ -28,20 +28,25 @@ export class HoldersAPI {
   }
 
   private async getTokenInfo(tokenAddress: string) {
-    const contract = new this.web3.eth.Contract(ERC20_ABI, tokenAddress);
-    const [decimals, totalSupply] = await Promise.all([
-      contract.methods.decimals().call(),
-      contract.methods.totalSupply().call(),
-    ]);
-    
-    if (!totalSupply) {
-      throw new Error("Failed to retrieve total supply");
+    try {
+      const contract = new this.web3.eth.Contract(ERC20_ABI, tokenAddress);
+      const [decimals, totalSupply] = await Promise.all([
+        contract.methods.decimals().call().catch(() => "18"), // Default to 18 if decimals call fails
+        contract.methods.totalSupply().call(),
+      ]);
+      
+      if (!totalSupply) {
+        throw new Error("Failed to retrieve total supply");
+      }
+      
+      return { 
+        decimals: Number(decimals || 18), // Ensure we have a fallback
+        totalSupply: totalSupply.toString() 
+      };
+    } catch (error) {
+      console.error("Error retrieving token info:", error);
+      throw new Error("Failed to retrieve token information");
     }
-    
-    return { 
-      decimals: Number(decimals || 18), 
-      totalSupply: totalSupply.toString() 
-    };
   }
 
   async getTokenHolders(tokenAddress: string) {
@@ -55,54 +60,109 @@ export class HoldersAPI {
       const divisor = BigInt(10 ** decimals);
       const totalSupplyAdjusted = (BigInt(totalSupply) / divisor).toString();
 
+      // Ensure totalSupply is not NaN when converted to Number
+      if (isNaN(Number(totalSupplyAdjusted))) {
+        throw new Error("Invalid total supply value");
+      }
+
       do {
-        // Construct URL with pagination parameters
-        const url = nextPageParams
-          ? `${config.scan.api}/tokens/${tokenAddress}/holders?${new URLSearchParams(nextPageParams)}`
-          : `${config.scan.api}/tokens/${tokenAddress}/holders`;
+        try {
+          // Construct URL with pagination parameters
+          const url = nextPageParams
+            ? `${config.scan.api}/tokens/${tokenAddress}/holders?${new URLSearchParams(nextPageParams)}`
+            : `${config.scan.api}/tokens/${tokenAddress}/holders`;
 
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Failed to fetch holders data');
-        
-        const data = await response.json();
-        
-        // Process current batch
-        for (const item of data.items) {
-          const balanceRaw = BigInt(item.value);
-          const balanceAdjusted = balanceRaw / divisor;
+          const response = await fetch(url);
+          if (!response.ok) throw new Error('Failed to fetch holders data');
           
-          holders.push({
-            address: item.address.hash,
-            balance: balanceAdjusted.toString(),
-            percentage: ((Number(balanceAdjusted) / Number(totalSupplyAdjusted)) * 100).toFixed(2),
-          });
+          const data = await response.json();
+          
+          // Validate response data
+          if (!data || !data.items || !Array.isArray(data.items)) {
+            throw new Error("Invalid holders data format");
+          }
+          
+          // Process current batch
+          for (const item of data.items) {
+            try {
+              if (!item || !item.address || !item.address.hash || !item.value) {
+                console.warn("Skipping invalid holder item:", item);
+                continue;
+              }
+              
+              const balanceRaw = BigInt(item.value);
+              const balanceAdjusted = balanceRaw / divisor;
+              const balanceStr = balanceAdjusted.toString();
+              
+              // Calculate percentage safely
+              let percentage = 0;
+              try {
+                percentage = (Number(balanceAdjusted) / Number(totalSupplyAdjusted)) * 100;
+                // Ensure percentage is a valid number and within bounds
+                if (isNaN(percentage) || percentage < 0) percentage = 0;
+                if (percentage > 100) percentage = 100;
+              } catch (err) {
+                console.error("Error calculating percentage:", err);
+              }
+              
+              holders.push({
+                address: item.address.hash,
+                balance: balanceStr,
+                percentage: parseFloat(percentage.toFixed(2))
+              });
 
-          processedHolders++;
-          if (this.progressCallback) {
-            this.progressCallback(processedHolders, Math.min(TARGET_HOLDERS, data.total_count));
+              processedHolders++;
+              if (this.progressCallback) {
+                this.progressCallback(processedHolders, Math.min(TARGET_HOLDERS, data.total_count || TARGET_HOLDERS));
+              }
+
+              if (processedHolders >= TARGET_HOLDERS) {
+                break;
+              }
+            } catch (itemError) {
+              console.error("Error processing holder item:", itemError);
+              // Continue with next item
+            }
           }
 
+          // Get next page parameters
+          nextPageParams = data.next_page_params;
+
+          // Break if we've reached our target
           if (processedHolders >= TARGET_HOLDERS) {
             break;
           }
+
+          // Add delay before next batch
+          await this.delay(this.DELAY_BETWEEN_BATCHES);
+        } catch (batchError) {
+          console.error("Error fetching holder batch:", batchError);
+          // Try to continue with next batch if possible
+          if (nextPageParams) {
+            await this.delay(this.DELAY_BETWEEN_BATCHES * 2); // Longer delay after error
+          } else {
+            break; // No more batches to process
+          }
         }
-
-        // Get next page parameters
-        nextPageParams = data.next_page_params;
-
-        // Break if we've reached our target
-        if (processedHolders >= TARGET_HOLDERS) {
-          break;
-        }
-
-        // Add delay before next batch
-        await this.delay(this.DELAY_BETWEEN_BATCHES);
-
       } while (nextPageParams);
 
-      const top10Total = holders
-        .slice(0, 10)
-        .reduce((acc, holder) => acc + Number(holder.percentage), 0);
+      if (holders.length === 0) {
+        throw new Error("No holder data found for this token");
+      }
+
+      // Calculate top 10 percentage safely
+      let top10Total = 0;
+      try {
+        top10Total = holders
+          .slice(0, Math.min(10, holders.length))
+          .reduce((acc, holder) => acc + holder.percentage, 0);
+          
+        // Ensure top10Total is a valid number
+        if (isNaN(top10Total) || top10Total < 0) top10Total = 0;
+        if (top10Total > 100) top10Total = 100;
+      } catch (error) {
+        console.error("Error calculating top 10 percentage:", error);
+      }
 
       return {
         holders,
