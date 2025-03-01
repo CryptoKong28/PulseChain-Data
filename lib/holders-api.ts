@@ -33,7 +33,15 @@ export class HoldersAPI {
       contract.methods.decimals().call(),
       contract.methods.totalSupply().call(),
     ]);
-    return { decimals: Number(decimals), totalSupply: totalSupply.toString() };
+    
+    if (!totalSupply) {
+      throw new Error("Failed to retrieve total supply");
+    }
+    
+    return { 
+      decimals: Number(decimals || 18), 
+      totalSupply: totalSupply.toString() 
+    };
   }
 
   async getTokenHolders(tokenAddress: string) {
