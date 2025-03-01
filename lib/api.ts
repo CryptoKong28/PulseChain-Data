@@ -109,9 +109,13 @@ export class TokenAPI {
           
           // Safely convert balance to a number format
           let formattedBalance: string;
+          let rawAmount: number = 0;
+          
           try {
             // First get the raw number value for validation
             const rawNumber = Number(this.web3.utils.fromWei(balance, "ether"));
+            // Store raw number for calculations
+            rawAmount = !isNaN(rawNumber) ? rawNumber : 0;
             
             // Format it for display
             formattedBalance = rawNumber.toLocaleString(undefined, {
@@ -121,13 +125,14 @@ export class TokenAPI {
           } catch (error) {
             console.error("Error formatting balance:", error);
             formattedBalance = "0.00";
+            rawAmount = 0;
           }
           
           return {
             address,
             amount: formattedBalance,
-            // Add a numeric version without commas for validation
-            rawAmount: parseFloat(formattedBalance.replace(/,/g, ''))
+            // Use the directly calculated raw amount instead of parsing the formatted string
+            rawAmount: rawAmount
           };
         })
       );

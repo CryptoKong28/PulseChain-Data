@@ -274,9 +274,9 @@ export default function Home() {
                     <div key={index} className="flex justify-between items-center py-2 border-b border-purple-500/20">
                       <span className="text-sm font-mono">{DOMPurify.sanitize(detail.address)}</span>
                       <span className="text-purple-300 break-all ml-4">
-                        {Number(DOMPurify.sanitize(detail.amount.toString())).toLocaleString(undefined, {
-                          maximumFractionDigits: 2
-                        })}
+                        {(detail.rawAmount && !isNaN(detail.rawAmount) 
+                          ? detail.rawAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                          : "0.00")}
                       </span>
                     </div>
                   ))}
