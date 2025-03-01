@@ -17,7 +17,12 @@ export const metadata: Metadata = {
         sizes: 'any',
       },
       {
-        url: '/icon.png',
+        url: '/favicon-16x16.png',
+        type: 'image/png',
+        sizes: '16x16',
+      },
+      {
+        url: '/favicon-32x32.png',
         type: 'image/png',
         sizes: '32x32',
       },
@@ -26,6 +31,16 @@ export const metadata: Metadata = {
       url: '/apple-touch-icon.png',
       sizes: '180x180',
     },
+    other: [
+      {
+        rel: 'android-chrome-192x192',
+        url: '/android-chrome-192x192.png',
+      },
+      {
+        rel: 'android-chrome-512x512',
+        url: '/android-chrome-512x512.png',
+      },
+    ],
   },
   manifest: '/site.webmanifest',
 };
