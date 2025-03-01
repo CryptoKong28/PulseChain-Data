@@ -17,6 +17,8 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import DOMPurify from "dompurify";
+import { useCSRFToken, validateCSRFToken } from "@/lib/csrf-token";
+import { ethers } from "ethers";
 
 export default function HoldersPage() {
   const [tokenAddress, setTokenAddress] = useState("");
@@ -26,6 +28,7 @@ export default function HoldersPage() {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [cooldown, setCooldown] = useState(10);
+  const csrfToken = useCSRFToken();
 
   useEffect(() => {
     if (cooldown > 0) {
@@ -41,15 +44,40 @@ export default function HoldersPage() {
     setTokenAddress(DOMPurify.sanitize("0xfc4913214444aF5c715cc9F7b52655e788A569ed"));
   };
 
+  const isValidEthereumAddress = (address: string) => {
+    try {
+      ethers.getAddress(address);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cooldown > 0 || loading) return;
+    
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+    const submittedToken = formData.get('csrf_token') as string;
+    
+    if (!submittedToken || !validateCSRFToken(submittedToken)) {
+      setError("Security validation failed. Please refresh the page and try again.");
+      return;
+    }
+    
     setLoading(true);
     setError(null);
     setProgress(0);
+    setCooldown(10);
 
     try {
       const cleanName = DOMPurify.sanitize(tokenName).substring(0, 30);
       const cleanAddress = DOMPurify.sanitize(tokenAddress);
+
+      if (!isValidEthereumAddress(cleanAddress)) {
+        throw new Error("Invalid Ethereum address format");
+      }
 
       const api = HoldersAPI.getInstance();
       
@@ -63,14 +91,42 @@ export default function HoldersPage() {
           !data.holders || 
           !Array.isArray(data.holders) ||
           typeof data.totalHolders !== 'number' ||
-          typeof data.top10Percentage !== 'number') {
+          isNaN(data.totalHolders) ||
+          data.totalHolders < 0 ||
+          typeof data.top10Percentage !== 'number' ||
+          isNaN(data.top10Percentage) ||
+          data.top10Percentage < 0 ||
+          data.top10Percentage > 100 ||
+          typeof data.totalSupply !== 'string' ||
+          isNaN(Number(data.totalSupply))) {
         throw new Error("Invalid API response structure");
+      }
+      
+      // Validate individual holder data
+      if (data.holders.some((holder: any) => 
+          !holder.address || 
+          typeof holder.address !== 'string' ||
+          typeof holder.balance !== 'string' ||
+          isNaN(Number(holder.balance)) ||
+          typeof holder.percentage !== 'number' ||
+          isNaN(holder.percentage) ||
+          holder.percentage < 0 ||
+          holder.percentage > 100)) {
+        throw new Error("Invalid holder data in response");
       }
 
       setResults(data);
-      setCooldown(10);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      console.error("API Error:", err);
+      setError("An unexpected error occurred. Please try again later.");
+      
+      if (err instanceof Error) {
+        if (err.message.includes("Invalid Ethereum address")) {
+          setError("Please enter a valid Ethereum address.");
+        } else if (err.message.includes("API response")) {
+          setError("Unable to process data. Please try again later.");
+        }
+      }
     } finally {
       setLoading(false);
       setProgress(0);
@@ -83,9 +139,9 @@ export default function HoldersPage() {
     const content = [
       ["Address", "Balance", "Percentage"],
       ...results.holders.map((holder: any) => [
-        holder.address,
-        holder.balance,
-        holder.percentage
+        DOMPurify.sanitize(holder.address),
+        DOMPurify.sanitize(holder.balance.toString()),
+        DOMPurify.sanitize(holder.percentage.toString())
       ])
     ].map(row => row.join(",")).join("\n");
 
@@ -93,7 +149,7 @@ export default function HoldersPage() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${tokenName.toLowerCase()}-holders.txt`;
+    a.download = `${DOMPurify.sanitize(tokenName.toLowerCase())}-holders.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -114,7 +170,7 @@ export default function HoldersPage() {
 
   const handleBarClick = (data: any) => {
     if (data && data.tooltipAddress) {
-      navigator.clipboard.writeText(data.tooltipAddress);
+      navigator.clipboard.writeText(DOMPurify.sanitize(data.tooltipAddress));
       toast.success("Address copied to clipboard!");
     }
   };
@@ -146,6 +202,7 @@ export default function HoldersPage() {
               Quick Search for ICSA
             </Button>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <input type="hidden" name="csrf_token" value={csrfToken} />
               <div className="space-y-2">
                 <Input
                   placeholder="Token Name (e.g., HEX)"
@@ -164,7 +221,7 @@ export default function HoldersPage() {
               </div>
               {error && (
                 <div className="text-red-400 text-sm p-2 bg-red-900/20 rounded">
-                  {error}
+                  {DOMPurify.sanitize(error)}
                 </div>
               )}
               <Button 
@@ -197,7 +254,7 @@ export default function HoldersPage() {
           <Card className="max-w-4xl mx-auto mt-8 bg-black/50 border border-emerald-500/30 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="text-2xl text-center text-emerald-300">
-                Holder Distribution for {tokenName.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+                Holder Distribution for {DOMPurify.sanitize(tokenName)}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -232,10 +289,10 @@ export default function HoldersPage() {
                                   {DOMPurify.sanitize(payload[0].payload.tooltipAddress)} (Click to copy)
                                 </p>
                                 <p className="text-white">
-                                  Balance: {payload[0].payload.actualBalance.toLocaleString()} tokens
+                                  Balance: {payload[0].payload.actualBalance ? DOMPurify.sanitize(payload[0].payload.actualBalance.toLocaleString()) : "0"} tokens
                                 </p>
                                 <p className="text-white">
-                                  Percentage: {payload[0].value}%
+                                  Percentage: {payload[0].value ? DOMPurify.sanitize(payload[0].value.toString()) : "0"}%
                                 </p>
                               </div>
                             );

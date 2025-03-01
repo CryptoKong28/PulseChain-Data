@@ -16,6 +16,7 @@ import {
 } from "recharts";
 import { ethers } from "ethers";
 import DOMPurify from "dompurify";
+import { useCSRFToken, validateCSRFToken } from "@/lib/csrf-token";
 
 const CHART_COLORS = [
   "#F59E0B", "#D97706", "#B45309", "#92400E", "#78350F",
@@ -29,6 +30,7 @@ export default function VolumePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(10);
+  const csrfToken = useCSRFToken();
 
   useEffect(() => {
     if (cooldown > 0) {
@@ -55,8 +57,20 @@ export default function VolumePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cooldown > 0 || loading) return;
+    
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+    const submittedToken = formData.get('csrf_token') as string;
+    
+    if (!submittedToken || !validateCSRFToken(submittedToken)) {
+      setError("Security validation failed. Please refresh the page and try again.");
+      return;
+    }
+    
     setLoading(true);
     setError(null);
+    setCooldown(10);
 
     try {
       if (!isValidEthereumAddress(tokenAddress)) {
@@ -78,14 +92,44 @@ export default function VolumePage() {
           !data.pairs || 
           !Array.isArray(data.pairs) || 
           typeof data.totalVolume !== 'number' ||
-          typeof data.dexCount !== 'number') {
+          isNaN(data.totalVolume) || // Check for NaN
+          data.totalVolume < 0 || // Business logic validation
+          typeof data.dexCount !== 'number' ||
+          isNaN(data.dexCount) ||
+          data.dexCount < 0) {
         throw new Error("Invalid API response structure");
       }
 
+      // Validate individual pair data
+      if (data.pairs.some((pair: any) => 
+          typeof pair.volume !== 'number' || 
+          isNaN(pair.volume) ||
+          typeof pair.percentage !== 'number' ||
+          isNaN(pair.percentage) ||
+          !pair.dexId ||
+          !pair.pairAddress ||
+          !pair.baseToken ||
+          !pair.baseToken.symbol ||
+          !pair.quoteToken ||
+          !pair.quoteToken.symbol)) {
+        throw new Error("Invalid pair data in response");
+      }
+
       setResults(data);
-      setTokenName(cleanTokenName);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      console.error("API Error:", err); // Log detailed error for developers
+      setError("An unexpected error occurred. Please try again later."); // Generic message for users
+      
+      // Show more specific messages for common errors
+      if (err instanceof Error) {
+        if (err.message.includes("Invalid Ethereum address")) {
+          setError("Please enter a valid Ethereum address.");
+        } else if (err.message.includes("Cannot scan burn address")) {
+          setError("This address cannot be scanned. Please try a different address.");
+        } else if (err.message.includes("API response")) {
+          setError("Unable to process data. Please try again later.");
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -97,12 +141,12 @@ export default function VolumePage() {
     const csvContent = [
       ["DEX", "Pair Address", "Base Token", "Quote Token", "24h Volume", "Percentage"],
       ...results.pairs.map((pair: any) => [
-        pair.dexId,
-        pair.pairAddress,
-        pair.baseToken.symbol,
-        pair.quoteToken.symbol,
-        pair.volume,
-        pair.percentage
+        DOMPurify.sanitize(pair.dexId.toString()),
+        DOMPurify.sanitize(pair.pairAddress),
+        DOMPurify.sanitize(pair.baseToken.symbol),
+        DOMPurify.sanitize(pair.quoteToken.symbol),
+        DOMPurify.sanitize(pair.volume.toString()),
+        DOMPurify.sanitize(pair.percentage.toString())
       ])
     ].map(row => row.join(",")).join("\n");
 
@@ -110,7 +154,7 @@ export default function VolumePage() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${tokenName.toLowerCase()}-volume.csv`;
+    a.download = `${DOMPurify.sanitize(tokenName.toLowerCase())}-volume.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -211,6 +255,7 @@ export default function VolumePage() {
               Quick Search for UFO
             </Button>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <input type="hidden" name="csrf_token" value={csrfToken} />
               <div className="space-y-2">
                 <Input
                   placeholder="Token Name (e.g., HEX)"
@@ -232,7 +277,7 @@ export default function VolumePage() {
               </div>
               {error && (
                 <div className="text-red-400 text-sm p-2 bg-red-900/20 rounded">
-                  {error}
+                  {DOMPurify.sanitize(error)}
                 </div>
               )}
               <Button 
@@ -255,7 +300,7 @@ export default function VolumePage() {
           <Card className="max-w-4xl mx-auto mt-8 bg-black/50 border border-amber-500/30 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="text-2xl text-center text-amber-300">
-                Volume Distribution for {tokenName.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+                Volume Distribution for {DOMPurify.sanitize(tokenName)}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -323,22 +368,22 @@ export default function VolumePage() {
                               </td>
                               <td className="px-4 py-3">
                                 <div className="text-sm">
-                                  <span className="font-medium text-amber-300">{pair.baseToken.symbol}</span>
+                                  <span className="font-medium text-amber-300">{DOMPurify.sanitize(pair.baseToken.symbol)}</span>
                                   <span className="text-gray-400"> / </span>
-                                  <span className="font-medium text-amber-300">{pair.quoteToken.symbol}</span>
+                                  <span className="font-medium text-amber-300">{DOMPurify.sanitize(pair.quoteToken.symbol)}</span>
                                 </div>
                                 <div className="text-xs text-gray-400 font-mono truncate">
-                                  {pair.pairAddress}
+                                  {DOMPurify.sanitize(pair.pairAddress)}
                                 </div>
                               </td>
                               <td className="px-4 py-3 text-right whitespace-nowrap">
                                 <span className="text-sm font-medium">
-                                  ${Number(pair.volume).toLocaleString()}
+                                  ${Number(DOMPurify.sanitize(pair.volume.toString())).toLocaleString()}
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-right whitespace-nowrap">
                                 <span className="text-sm font-medium">
-                                  {pair.percentage}%
+                                  {DOMPurify.sanitize(pair.percentage.toString())}%
                                 </span>
                               </td>
                             </tr>

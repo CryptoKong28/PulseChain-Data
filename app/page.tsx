@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TokenAPI } from "@/lib/api";
 import DOMPurify from "dompurify";
+import { useCSRFToken, validateCSRFToken } from "@/lib/csrf-token";
+import { ethers } from "ethers";
 
 export default function Home() {
   const [tokenAddress, setTokenAddress] = useState("");
@@ -16,6 +18,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(10);
   const DECIMALS = Number(process.env.NEXT_PUBLIC_NATIVE_TOKEN_DECIMALS) || 18;
+  const csrfToken = useCSRFToken();
 
   useEffect(() => {
     if (cooldown > 0) {
@@ -31,26 +34,74 @@ export default function Home() {
     setTokenAddress(DOMPurify.sanitize("0x2fa878Ab3F87CC1C9737Fc071108F904c0B0C95d"));
   };
 
+  const isValidEthereumAddress = (address: string) => {
+    try {
+      ethers.getAddress(address);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cooldown > 0 || loading) return;
+    
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+    const submittedToken = formData.get('csrf_token') as string;
+    
+    if (!submittedToken || !validateCSRFToken(submittedToken)) {
+      setError("Security validation failed. Please refresh the page and try again.");
+      return;
+    }
+    
     setLoading(true);
     setError(null);
+    setCooldown(10);
 
     try {
       const cleanName = DOMPurify.sanitize(tokenName).substring(0, 30);
       const cleanAddress = DOMPurify.sanitize(tokenAddress);
 
+      // Validate address if provided (PLS token doesn't need an address)
+      if (cleanAddress && !isValidEthereumAddress(cleanAddress)) {
+        throw new Error("Invalid Ethereum address format");
+      }
+
       const api = TokenAPI.getInstance();
       const data = await api.scanBurnedTokens(cleanName, cleanAddress);
       
-      if (!data || !data.burnDetails || !Array.isArray(data.burnDetails)) {
+      if (!data || 
+          !data.burnDetails || 
+          !Array.isArray(data.burnDetails) ||
+          typeof data.totalSupply !== 'string' ||
+          typeof data.totalBurned !== 'string' ||
+          isNaN(Number(data.totalSupply)) ||
+          isNaN(Number(data.totalBurned.replace(/,/g, '')))) {
         throw new Error("Invalid API response structure");
+      }
+      
+      if (data.burnDetails.some((detail: any) => 
+          !detail.address || 
+          typeof detail.address !== 'string' ||
+          !detail.amount || 
+          isNaN(Number(detail.amount)))) {
+        throw new Error("Invalid burn details in response");
       }
 
       setResults(data);
-      setCooldown(10);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      console.error("API Error:", err);
+      setError("An unexpected error occurred. Please try again later.");
+      
+      if (err instanceof Error) {
+        if (err.message.includes("Invalid Ethereum address")) {
+          setError("Please enter a valid Ethereum address.");
+        } else if (err.message.includes("API response structure")) {
+          setError("Unable to process data. Please try again later.");
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -58,12 +109,12 @@ export default function Home() {
 
   const handleDownload = () => {
     if (!results) return;
-    const data = `${results.name.toLowerCase()},${tokenAddress || "PLS"},${results.totalBurned}`;
+    const data = `${DOMPurify.sanitize(results.name.toLowerCase())},${DOMPurify.sanitize(tokenAddress || "PLS")},${DOMPurify.sanitize(results.totalBurned.toString())}`;
     const blob = new Blob([data], { type: "text/plain" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${results.name.toLowerCase()}-burned.txt`;
+    a.download = `${DOMPurify.sanitize(results.name.toLowerCase())}-burned.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -149,6 +200,7 @@ export default function Home() {
               Quick Search for INC
             </Button>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <input type="hidden" name="csrf_token" value={csrfToken} />
               <div className="space-y-2">
                 <Input
                   placeholder="Token Name (e.g., PLS)"
@@ -167,7 +219,7 @@ export default function Home() {
               </div>
               {error && (
                 <div className="text-red-400 text-sm p-2 bg-red-900/20 rounded">
-                  {error}
+                  {DOMPurify.sanitize(error)}
                 </div>
               )}
               <Button 
@@ -190,7 +242,7 @@ export default function Home() {
           <Card className="max-w-2xl mx-auto mt-8 bg-black/50 border border-purple-500/30 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="text-2xl text-center text-purple-300">
-                Results for {results.name.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+                Results for {DOMPurify.sanitize(results.name)}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -218,9 +270,9 @@ export default function Home() {
                   <p className="text-sm text-gray-400 mb-2">Burn Details</p>
                   {results.burnDetails.map((detail: any, index: number) => (
                     <div key={index} className="flex justify-between items-center py-2 border-b border-purple-500/20">
-                      <span className="text-sm font-mono">{detail.address}</span>
+                      <span className="text-sm font-mono">{DOMPurify.sanitize(detail.address)}</span>
                       <span className="text-purple-300 break-all ml-4">
-                        {Number(detail.amount).toLocaleString(undefined, {
+                        {Number(DOMPurify.sanitize(detail.amount.toString())).toLocaleString(undefined, {
                           maximumFractionDigits: 2
                         })}
                       </span>

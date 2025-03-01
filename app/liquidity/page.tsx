@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiquidityAPI } from "@/lib/liquidity-api";
 import DOMPurify from "dompurify";
+import { useCSRFToken, validateCSRFToken } from "@/lib/csrf-token";
+import { ethers } from "ethers";
 
 const CHART_COLORS = [
   "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEEAD",
@@ -41,6 +43,7 @@ export default function LiquidityPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(10);
+  const csrfToken = useCSRFToken();
 
   useEffect(() => {
     if (cooldown > 0) {
@@ -56,14 +59,39 @@ export default function LiquidityPage() {
     setTokenAddress(DOMPurify.sanitize("0x2b591e99afE9f32eAA6214f7B7629768c40Eeb39"));
   };
 
+  const isValidEthereumAddress = (address: string) => {
+    try {
+      ethers.getAddress(address);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cooldown > 0 || loading) return;
+    
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+    const submittedToken = formData.get('csrf_token') as string;
+    
+    if (!submittedToken || !validateCSRFToken(submittedToken)) {
+      setError("Security validation failed. Please refresh the page and try again.");
+      return;
+    }
+    
     setLoading(true);
     setError(null);
+    setCooldown(10);
 
     try {
       const cleanName = DOMPurify.sanitize(tokenName).substring(0, 30);
       const cleanAddress = DOMPurify.sanitize(tokenAddress);
+
+      if (!isValidEthereumAddress(cleanAddress)) {
+        throw new Error("Invalid Ethereum address format");
+      }
 
       const api = LiquidityAPI.getInstance();
       const data = await api.getPairsData(cleanAddress);
@@ -73,11 +101,33 @@ export default function LiquidityPage() {
           !Array.isArray(data.pairs)) {
         throw new Error("Invalid API response structure");
       }
+      
+      if (data.pairs.some((pair: any) => 
+          !pair.dexId || 
+          !pair.pairAddress || 
+          !pair.baseToken || 
+          !pair.baseToken.symbol || 
+          !pair.quoteToken || 
+          !pair.quoteToken.symbol || 
+          !pair.liquidity || 
+          typeof pair.liquidity.usd !== 'number' || 
+          isNaN(pair.liquidity.usd) || 
+          pair.liquidity.usd < 0)) {
+        throw new Error("Invalid pair data in response");
+      }
 
       setResults(data);
-      setCooldown(10);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      console.error("API Error:", err);
+      setError("An unexpected error occurred. Please try again later.");
+      
+      if (err instanceof Error) {
+        if (err.message.includes("Invalid Ethereum address")) {
+          setError("Please enter a valid Ethereum address.");
+        } else if (err.message.includes("API response")) {
+          setError("Unable to process data. Please try again later.");
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -89,11 +139,11 @@ export default function LiquidityPage() {
     const content = [
       ["DEX", "Pair Address", "Base Token", "Quote Token", "Liquidity (USD)"],
       ...results.pairs.map((pair: any) => [
-        pair.dexId,
-        pair.pairAddress,
-        pair.baseToken.symbol,
-        pair.quoteToken.symbol,
-        pair.liquidity.usd
+        DOMPurify.sanitize(pair.dexId.toString()),
+        DOMPurify.sanitize(pair.pairAddress),
+        DOMPurify.sanitize(pair.baseToken.symbol),
+        DOMPurify.sanitize(pair.quoteToken.symbol),
+        DOMPurify.sanitize(pair.liquidity.usd.toString())
       ])
     ].map(row => row.join(",")).join("\n");
 
@@ -101,7 +151,7 @@ export default function LiquidityPage() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${tokenName.toLowerCase()}-liquidity.txt`;
+    a.download = `${DOMPurify.sanitize(tokenName.toLowerCase())}-liquidity.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -153,6 +203,7 @@ export default function LiquidityPage() {
               Quick Search for HEX
             </Button>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <input type="hidden" name="csrf_token" value={csrfToken} />
               <div className="space-y-2">
                 <Input
                   placeholder="Token Name (e.g., HEX)"
@@ -171,7 +222,7 @@ export default function LiquidityPage() {
               </div>
               {error && (
                 <div className="text-red-400 text-sm p-2 bg-red-900/20 rounded">
-                  {error}
+                  {DOMPurify.sanitize(error)}
                 </div>
               )}
               <Button 
@@ -194,7 +245,7 @@ export default function LiquidityPage() {
           <Card className="max-w-4xl mx-auto mt-8 bg-black/50 border border-cyan-500/30 backdrop-blur-sm">
             <CardHeader>
               <CardTitle className="text-2xl text-center text-cyan-300">
-                Liquidity Distribution for {tokenName.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+                Liquidity Distribution for {DOMPurify.sanitize(tokenName)}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -262,22 +313,22 @@ export default function LiquidityPage() {
                               </td>
                               <td className="px-4 py-3">
                                 <div className="text-sm">
-                                  <span className="font-medium text-cyan-300">{pair.baseToken.symbol}</span>
+                                  <span className="font-medium text-cyan-300">{DOMPurify.sanitize(pair.baseToken.symbol)}</span>
                                   <span className="text-gray-400"> / </span>
-                                  <span className="font-medium text-cyan-300">{pair.quoteToken.symbol}</span>
+                                  <span className="font-medium text-cyan-300">{DOMPurify.sanitize(pair.quoteToken.symbol)}</span>
                                 </div>
                                 <div className="text-xs text-gray-400 font-mono truncate">
-                                  {pair.pairAddress}
+                                  {DOMPurify.sanitize(pair.pairAddress)}
                                 </div>
                               </td>
                               <td className="px-4 py-3 text-right whitespace-nowrap">
                                 <span className="text-sm font-medium">
-                                  ${Number(pair.liquidity.usd).toLocaleString()}
+                                  ${Number(DOMPurify.sanitize(pair.liquidity.usd.toString())).toLocaleString()}
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-right whitespace-nowrap">
                                 <span className="text-sm font-medium">
-                                  {((pair.liquidity.usd / totalLiquidity) * 100).toFixed(1)}%
+                                  {((Number(DOMPurify.sanitize(pair.liquidity.usd.toString())) / totalLiquidity) * 100).toFixed(1)}%
                                 </span>
                               </td>
                             </tr>
