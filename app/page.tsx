@@ -179,7 +179,7 @@ export default function Home() {
             </Button>
             <Button
               className="bg-pink-600 hover:bg-pink-700"
-              onClick={() => window.open("https://github.com/your-repo-url", "_blank")}
+              onClick={() => window.open("https://github.com/CryptoKong28/PulseChain-Data", "_blank")}
             >
               <Code className="mr-2 h-4 w-4" />
               View Frontend Code
